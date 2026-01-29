@@ -8,7 +8,8 @@ import {
   onAuthStateChanged, 
   User 
 } from "firebase/auth";
-import { auth } from "@/lib/firebase"; // Certifique-se que o firebase.ts que te passei antes está lá!
+import { doc, getDoc, setDoc, serverTimestamp } from "firebase/firestore"; // Novos imports
+import { auth, db } from "@/lib/firebase";
 
 interface AuthContextType {
   user: User | null;
@@ -24,13 +25,40 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    // Esse ouvinte detecta se o usuário logou/deslogou em tempo real
-    const unsubscribe = onAuthStateChanged(auth, (user) => {
-      setUser(user);
+    const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
+      if (currentUser) {
+        // Se o usuário logou, vamos garantir que ele está no banco
+        await checkAndCreateUserInFirestore(currentUser);
+      }
+      setUser(currentUser);
       setLoading(false);
     });
     return () => unsubscribe();
   }, []);
+
+  // Lógica inteligente: Verifica se o usuário existe antes de gravar
+  const checkAndCreateUserInFirestore = async (firebaseUser: User) => {
+    const userRef = doc(db, "users", firebaseUser.uid);
+    const userSnap = await getDoc(userRef);
+
+    if (!userSnap.exists()) {
+      // Cria o perfil inicial se não existir
+      try {
+        await setDoc(userRef, {
+          uid: firebaseUser.uid,
+          name: firebaseUser.displayName,
+          email: firebaseUser.email,
+          photoURL: firebaseUser.photoURL,
+          createdAt: serverTimestamp(),
+          monthlyIncome: 0, // Começa zerado
+          onboardingCompleted: false // Flag para sabermos se precisa configurar
+        });
+        console.log("Novo usuário criado no Firestore!");
+      } catch (error) {
+        console.error("Erro ao criar usuário no banco:", error);
+      }
+    }
+  };
 
   const signInWithGoogle = async () => {
     const provider = new GoogleAuthProvider();
@@ -52,5 +80,4 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   );
 }
 
-// Hook personalizado para não precisar importar useContext toda hora
 export const useAuth = () => useContext(AuthContext);
